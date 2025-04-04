@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import StudyGroup
+from .models import StudyGroup, Flashcard
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -21,7 +21,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             password=validated_data['password']
         )
         return user
-    
+
 class StudyGroupSerializer(serializers.ModelSerializer):
     creator = UserSerializer(read_only=True)
     members = UserSerializer(many=True, read_only=True)
@@ -32,5 +32,10 @@ class StudyGroupSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         group = StudyGroup.objects.create(**validated_data)
-        group.members.add(group.creator)  
+        group.members.add(group.creator)  # Creator is automatically a member
         return group
+
+class FlashcardSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Flashcard
+        fields = ['id', 'front', 'back', 'category', 'created_at']

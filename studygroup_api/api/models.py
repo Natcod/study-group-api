@@ -9,3 +9,13 @@ class StudyGroup(models.Model):
 
     def __str__(self):
         return self.name
+
+class Flashcard(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='flashcards')
+    front = models.TextField()
+    back = models.TextField()
+    category = models.CharField(max_length=50, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.front} - {self.user.username}"
