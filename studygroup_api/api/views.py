@@ -1,3 +1,4 @@
+import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -9,6 +10,9 @@ from .models import StudyGroup, Flashcard
 from .serializers import UserSerializer, RegisterSerializer, StudyGroupSerializer, FlashcardSerializer
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+
+# Set up logger for the 'api' app
+logger = logging.getLogger('api')
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
@@ -34,10 +38,12 @@ class RegisterView(APIView):
         if serializer.is_valid():
             user = serializer.save()
             token, created = Token.objects.get_or_create(user=user)
+            logger.info(f"User {user.username} registered successfully")
             return Response({
                 'user': UserSerializer(user).data,
                 'token': token.key
             }, status=status.HTTP_201_CREATED)
+        logger.error(f"Registration failed: {serializer.errors}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class LoginView(APIView):
@@ -69,7 +75,9 @@ class LoginView(APIView):
         user = authenticate(username=username, password=password)
         if user:
             token, created = Token.objects.get_or_create(user=user)
+            logger.info(f"User {username} logged in successfully")
             return Response({'token': token.key}, status=status.HTTP_200_OK)
+        logger.error(f"Login failed for username {username}: Invalid credentials")
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
 class UserDetailView(APIView):
@@ -87,21 +95,34 @@ class UserDetailView(APIView):
         try:
             user = User.objects.get(id=id)
             serializer = UserSerializer(user)
+            logger.info(f"User {id} details retrieved by {request.user.username}")
             return Response(serializer.data, status=status.HTTP_200_OK)
         except User.DoesNotExist:
+            logger.error(f"User {id} not found")
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
 class StudyGroupListCreateView(APIView):
     @swagger_auto_schema(
-        operation_description="List all study groups.",
+        operation_description="List all study groups. Results are paginated (10 per page). Use ?page=2 to access the next page.",
         responses={
-            200: openapi.Response('List of study groups', StudyGroupSerializer(many=True))
+            200: openapi.Response('Paginated list of study groups', openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'count': openapi.Schema(type=openapi.TYPE_INTEGER, description='Total number of groups'),
+                    'next': openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description='URL to the next page'),
+                    'previous': openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description='URL to the previous page'),
+                    'results': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(ref='#/components/schemas/StudyGroup'))
+                }
+            ))
         }
     )
     def get(self, request):
         groups = StudyGroup.objects.all()
-        serializer = StudyGroupSerializer(groups, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(groups, request)
+        serializer = StudyGroupSerializer(page, many=True)
+        logger.info(f"Listed study groups (page {request.GET.get('page', 1)})")
+        return paginator.get_paginated_response(serializer.data)
 
     @swagger_auto_schema(
         operation_description="Create a new study group. The authenticated user is set as the creator.",
@@ -123,7 +144,9 @@ class StudyGroupListCreateView(APIView):
         serializer = StudyGroupSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save(creator=request.user)
+            logger.info(f"Study group {serializer.data['name']} created by {request.user.username}")
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+        logger.error(f"Study group creation failed: {serializer.errors}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class StudyGroupDetailView(APIView):
@@ -143,8 +166,10 @@ class StudyGroupDetailView(APIView):
     def get(self, request, id):
         group = self.get_object(id)
         if not group:
+            logger.error(f"Study group {id} not found")
             return Response({'error': 'Group not found'}, status=status.HTTP_404_NOT_FOUND)
         serializer = StudyGroupSerializer(group)
+        logger.info(f"Study group {id} details retrieved by {request.user.username}")
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @swagger_auto_schema(
@@ -168,13 +193,17 @@ class StudyGroupDetailView(APIView):
     def put(self, request, id):
         group = self.get_object(id)
         if not group:
+            logger.error(f"Study group {id} not found for update")
             return Response({'error': 'Group not found'}, status=status.HTTP_404_NOT_FOUND)
         if group.creator != request.user:
+            logger.warning(f"User {request.user.username} attempted to update study group {id} but is not the creator")
             return Response({'error': 'Only the creator can update this group'}, status=status.HTTP_403_FORBIDDEN)
         serializer = StudyGroupSerializer(group, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            logger.info(f"Study group {id} updated by {request.user.username}")
             return Response(serializer.data, status=status.HTTP_200_OK)
+        logger.error(f"Study group {id} update failed: {serializer.errors}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @swagger_auto_schema(
@@ -189,10 +218,13 @@ class StudyGroupDetailView(APIView):
     def delete(self, request, id):
         group = self.get_object(id)
         if not group:
+            logger.error(f"Study group {id} not found for deletion")
             return Response({'error': 'Group not found'}, status=status.HTTP_404_NOT_FOUND)
         if group.creator != request.user:
+            logger.warning(f"User {request.user.username} attempted to delete study group {id} but is not the creator")
             return Response({'error': 'Only the creator can delete this group'}, status=status.HTTP_403_FORBIDDEN)
         group.delete()
+        logger.info(f"Study group {id} deleted by {request.user.username}")
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 class JoinStudyGroupView(APIView):
@@ -212,22 +244,35 @@ class JoinStudyGroupView(APIView):
     def post(self, request, id):
         group = StudyGroup.objects.filter(id=id).first()
         if not group:
+            logger.error(f"Study group {id} not found for joining")
             return Response({'error': 'Group not found'}, status=status.HTTP_404_NOT_FOUND)
         group.members.add(request.user)
+        logger.info(f"User {request.user.username} joined study group {id}")
         return Response({'message': 'Joined group successfully'}, status=status.HTTP_200_OK)
 
 class FlashcardListCreateView(APIView):
     @swagger_auto_schema(
-        operation_description="List all flashcards for the authenticated user.",
+        operation_description="List all flashcards for the authenticated user. Results are paginated (10 per page). Use ?page=2 to access the next page.",
         responses={
-            200: openapi.Response('List of flashcards', FlashcardSerializer(many=True)),
+            200: openapi.Response('Paginated list of flashcards', openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'count': openapi.Schema(type=openapi.TYPE_INTEGER, description='Total number of flashcards'),
+                    'next': openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description='URL to the next page'),
+                    'previous': openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description='URL to the previous page'),
+                    'results': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(ref='#/components/schemas/Flashcard'))
+                }
+            )),
             401: 'Unauthorized - Authentication required'
         }
     )
     def get(self, request):
         flashcards = Flashcard.objects.filter(user=request.user)
-        serializer = FlashcardSerializer(flashcards, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(flashcards, request)
+        serializer = FlashcardSerializer(page, many=True)
+        logger.info(f"Listed flashcards for {request.user.username} (page {request.GET.get('page', 1)})")
+        return paginator.get_paginated_response(serializer.data)
 
     @swagger_auto_schema(
         operation_description="Create a new flashcard for the authenticated user.",
@@ -250,7 +295,9 @@ class FlashcardListCreateView(APIView):
         serializer = FlashcardSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save(user=request.user)
+            logger.info(f"Flashcard created by {request.user.username}: {serializer.data['front']}")
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+        logger.error(f"Flashcard creation failed: {serializer.errors}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class FlashcardDetailView(APIView):
@@ -281,11 +328,14 @@ class FlashcardDetailView(APIView):
     def put(self, request, id):
         flashcard = self.get_object(id, request.user)
         if not flashcard:
+            logger.error(f"Flashcard {id} not found or not authorized for {request.user.username}")
             return Response({'error': 'Flashcard not found or not authorized'}, status=status.HTTP_404_NOT_FOUND)
         serializer = FlashcardSerializer(flashcard, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            logger.info(f"Flashcard {id} updated by {request.user.username}")
             return Response(serializer.data, status=status.HTTP_200_OK)
+        logger.error(f"Flashcard {id} update failed: {serializer.errors}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @swagger_auto_schema(
@@ -299,6 +349,8 @@ class FlashcardDetailView(APIView):
     def delete(self, request, id):
         flashcard = self.get_object(id, request.user)
         if not flashcard:
+            logger.error(f"Flashcard {id} not found or not authorized for {request.user.username}")
             return Response({'error': 'Flashcard not found or not authorized'}, status=status.HTTP_404_NOT_FOUND)
         flashcard.delete()
+        logger.info(f"Flashcard {id} deleted by {request.user.username}")
         return Response(status=status.HTTP_204_NO_CONTENT)
