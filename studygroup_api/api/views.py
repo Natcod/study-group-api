@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
+from rest_framework.pagination import PageNumberPagination
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from .models import StudyGroup, Flashcard
@@ -102,6 +103,9 @@ class UserDetailView(APIView):
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
 class StudyGroupListCreateView(APIView):
+    # Define pagination_class explicitly
+    pagination_class = PageNumberPagination
+
     @swagger_auto_schema(
         operation_description="List all study groups. Results are paginated (10 per page). Use ?page=2 to access the next page.",
         responses={
@@ -111,7 +115,13 @@ class StudyGroupListCreateView(APIView):
                     'count': openapi.Schema(type=openapi.TYPE_INTEGER, description='Total number of groups'),
                     'next': openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description='URL to the next page'),
                     'previous': openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description='URL to the previous page'),
-                    'results': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(ref='#/components/schemas/StudyGroup'))
+                    'results': openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            ref='#/components/schemas/StudyGroup'
+                        )
+                    )
                 }
             ))
         }
@@ -251,6 +261,9 @@ class JoinStudyGroupView(APIView):
         return Response({'message': 'Joined group successfully'}, status=status.HTTP_200_OK)
 
 class FlashcardListCreateView(APIView):
+    # Define pagination_class explicitly
+    pagination_class = PageNumberPagination
+
     @swagger_auto_schema(
         operation_description="List all flashcards for the authenticated user. Results are paginated (10 per page). Use ?page=2 to access the next page.",
         responses={
@@ -260,7 +273,13 @@ class FlashcardListCreateView(APIView):
                     'count': openapi.Schema(type=openapi.TYPE_INTEGER, description='Total number of flashcards'),
                     'next': openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description='URL to the next page'),
                     'previous': openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description='URL to the previous page'),
-                    'results': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(ref='#/components/schemas/Flashcard'))
+                    'results': openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            ref='#/components/schemas/Flashcard'
+                        )
+                    )
                 }
             )),
             401: 'Unauthorized - Authentication required'
